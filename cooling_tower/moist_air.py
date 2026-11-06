@@ -196,8 +196,8 @@ LE_FACTOR = 0.865**(2.0 / 3.0)  # VDI N4 Eq. (25): 0.865^(2/3) = 0.9079 (Klopper
 
 
 def _bosnjakovic(Y_s: float, Y: float) -> float:
-    """0.865^(2/3) (a - 1) / ln(a) with a = (Y_s + 0.622)/(Y + 0.622)."""
-    a = (Y_s + 0.622) / (Y + 0.622)
+    """0.865^(2/3) (a - 1) / ln(a) with a = (0.622 + Y_s)/(0.622 + Y)."""
+    a = (0.622 + Y_s) / (0.622 + Y)
     if abs(a - 1.0) < 1e-12:            # limit (a - 1) / ln(a) -> 1 for Y -> Y_s (avoids 0/0)
         return LE_FACTOR
     return LE_FACTOR * (a - 1.0) / math.log(a)
@@ -248,10 +248,11 @@ def water_side_table(T_W_grid, p: float, saturation: str = 'coolprop') -> WaterS
     T_W = np.asarray(T_W_grid, dtype=float)
     for T in (T_W.min(), T_W.max()):
         _check_liquid_range(float(T), "water_side_table")
+    # every value comes from the scalar functions above, so each formula is defined only once
     c_pL, c_pD, c_pW = (np.array(v) for v in zip(*(specific_heats(float(T)) for T in T_W)))
     Y_sat_W = np.array([Y_sat_W_fn(float(T), p) for T in T_W])
-    h_D_arr = DELTA_H_V0 + c_pD * T_W
-    h_L_sat_W_arr = c_pL * T_W + Y_sat_W * h_D_arr
+    h_D_arr = np.array([h_D(float(T)) for T in T_W])
+    h_L_sat_W_arr = np.array([h_L_sat_W(float(T), float(Y)) for T, Y in zip(T_W, Y_sat_W)])
     return WaterSideTable(T_W=T_W, c_pL=c_pL, c_pD=c_pD, c_pW=c_pW, Y_sat_W=Y_sat_W, h_D=h_D_arr,
                           h_L_sat_W=h_L_sat_W_arr)
 
