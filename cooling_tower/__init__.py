@@ -22,8 +22,8 @@ Le_f (Lewis factor), sat_W / sat_L = saturated at the water / air temperature.
   geometry.py        fill cross-section, fill height, fill type
   fill.py            fill performance correlations (Merkel number per metre, loss coefficient), with validity ranges
   moist_air.py       properties: specific heats, humidity ratios, enthalpies, Lewis factor, water-side table  [done]
-  poppe.py           the Poppe equations, Runge-Kutta integration, iteration on the outlet humidity  [done: design,
-                     unsaturated air; supersaturated branch and Merkel switches to follow]
+  poppe.py           the Poppe equations (unsaturated and supersaturated air), Runge-Kutta integration, iteration on
+                     the outlet humidity  [done: design mode; Merkel validation switches to follow]
   pressure_drop.py   air-side pressure drop of the tower
   water_balance.py   evaporation, drift, blowdown, make-up water
   design.py          design: required Merkel number over L/G, fill height and cross-section, cost optimum

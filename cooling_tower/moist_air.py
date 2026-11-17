@@ -171,7 +171,7 @@ def h_L_sat_W(T_W: float, Y_sat_W: float) -> float:
 def h_L_ss(T_L: float, Y: float, Y_sat_L_: float) -> float:
     """Enthalpy of supersaturated air (saturated vapour + liquid mist) [J/kg dry air], Kröger Eq. (4.2.18), p. 242:
     c_pL T_L + Y_sat_L (Delta_h_V0 + c_pD T_L) + (Y - Y_sat_L) c_pW T_L, specific heats at T_eval_K(T_L).
-    For the later supersaturated branch of poppe.py (Kröger Eqs. 4.2.34-4.2.36)."""
+    Used in the supersaturated branch of poppe.py (Kröger Eqs. 4.2.34-4.2.36)."""
     c_pL, c_pD, c_pW = specific_heats(T_L)
     return c_pL * T_L + Y_sat_L_ * (DELTA_H_V0 + c_pD * T_L) + (Y - Y_sat_L_) * c_pW * T_L
 
@@ -185,6 +185,24 @@ def T_L_from_h_L(h: float, Y: float, T_lo: float = -40.0, T_hi: float = 60.0) ->
     Rubio-Castro et al. 2011, Eq. 33); -40 ... 60 °C encloses this range with margin. h_L rises monotonically with T,
     so brentq finds the single root if h lies inside the interval."""
     return brentq(lambda T: h_L(T, Y) - h, T_lo, T_hi, xtol=1e-6)
+
+
+def T_L_from_h_L_ss(h: float, Y: float, p: float, Y_sat_fn=None, T_lo: float | None = None,
+                    T_hi: float = 60.0) -> float:
+    """Air temperature [°C] of SUPERSATURATED air with enthalpy h [J/kg dry air] and total water content Y (vapour +
+    mist): h_L_ss(T_L, Y, Y_sat(T_L)) = h solved for T_L. Kloppers' dissertation, App. G, pp. G.8 and G.12, does the
+    same by trial (assume T_a, compute w_sa and i_ss, compare).
+    Y_sat_fn(T, p): saturation humidity ratio at the air temperature -- Y_sat_L (CoolProp, default) or
+    Y_sat_W_kroeger (validation), the same model as for Y_sat_W.
+    Search interval: the lower bound is the temperature from the UNSATURATED formula, T_L_from_h_L(h, Y) -- there
+    h_L_ss < h, because the vapour beyond Y_sat is counted as liquid (no latent heat), so the root lies above it
+    (Kloppers p. G.8: 290.84 K supersaturated against 289.32 K from the unsaturated formula). At T_hi = 60 °C the
+    saturation humidity is far above any Y in the tower, h_L_ss > h."""
+    if Y_sat_fn is None:
+        Y_sat_fn = Y_sat_L
+    if T_lo is None:
+        T_lo = T_L_from_h_L(h, Y)
+    return brentq(lambda T: h_L_ss(T, Y, Y_sat_fn(T, p)) - h, T_lo, T_hi, xtol=1e-6)
 
 
 # =============================================================================

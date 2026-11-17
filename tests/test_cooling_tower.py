@@ -11,12 +11,17 @@ moist_air.py (this file, now):
     property sets and that both use the same enthalpy reference (0 °C)
 
 poppe.py:
-  - Kloppers' dissertation, App. G (same inputs, 2 intervals, w_o = 0.02226 as given there): the four Runge-Kutta
-    increments of step (1,1) and the state at level 1 (pp. G.2-G.6). Only the FIRST interval can be compared: from
-    level 1 on the air is supersaturated and Kloppers continues with the supersaturated equations (not implemented
-    yet; his total Me_P = 0.741, Tab. H.2, therefore only as a plausibility check)
+  - Kloppers' dissertation, App. G (same inputs, 2 intervals, w_o = 0.02226 as given there), pp. G.2-G.12:
+    interval 1 unsaturated, interval 2 supersaturated. Kloppers decides the regime at the interval START and keeps the
+    saturation humidity w_sa of the start for all four Runge-Kutta stages of the interval. The helper
+    kloppers_integrate() repeats exactly this procedure with poppe.derivatives -> his increments j, k, l of every
+    stage and the end state (w_o = 0.02226, i_ss = 75378 J/kg, T_ao = 297.85 K, Me_P = 0.7341) are reproduced, which
+    checks the unsaturated AND the supersaturated equations.
+  - poppe.integrate itself decides the regime and Y_sat_L in EVERY stage. Kloppers' procedure is only of first order
+    in the interval size (frozen w_sa) and converges to the same solution for many intervals
+  - switching is continuous at saturation; inversion T_L(h_L_ss)
   - numerics: convergence of RK4 with the number of intervals, interval size option, mass and energy balance,
-    supersaturation flag, error for too little air
+    error for too little air
 
 Planned (poppe.py):
   - limiting case: Poppe with Le_f = 1 and no evaporation loss (poppe.py validation switches) reproduces
@@ -24,10 +29,10 @@ Planned (poppe.py):
   - the predecessor's tests (tests/test_solvers_golden.py etc.) must keep passing unchanged
 """
 
+import warnings
+
 import numpy as np
 import pytest
-
-import warnings
 
 from cooling_tower import moist_air as ma
 from cooling_tower import poppe as pp
@@ -152,7 +157,7 @@ def test_Y_sat_L_below_0C_runs():
 
 
 # =============================================================================
-# poppe.py -- Kloppers, dissertation, App. G (first Runge-Kutta interval)
+# poppe.py -- Kloppers, dissertation, App. G (unsaturated interval 1, supersaturated interval 2)
 # =============================================================================
 
 P_G1 = 101712.27            # p. G.1
@@ -160,6 +165,7 @@ T_WI = 39.67                # water inlet [°C] (312.82 K)
 M_W_I = 3.999               # water inlet flow [kg/s]
 M_L = 4.134                 # dry air flow [kg/s]
 W_O = 0.02226               # outlet humidity ratio used in Kloppers' mass balance (converged value, p. G.2)
+SAT_K = ma.Y_sat_W_kroeger  # Kröger's saturation formula, also at the air temperature (Kloppers uses A.2.1/A.3.5)
 
 
 @pytest.fixture
@@ -167,10 +173,35 @@ def kloppers_table():
     return ma.water_side_table(pp.water_grid(T_WI, T_WO, 2), P_G1, saturation='kroeger')
 
 
+def kloppers_integrate(tab, monkeypatch):
+    """Kloppers' procedure (App. G): the regime (unsaturated / supersaturated) and the saturation humidity w_sa are
+    determined at the START of each interval and kept for its four Runge-Kutta stages (p. G.9: w_sa(2,1) = w_sa(1);
+    p. G.11: 'by proceeding along the same lines'). Returns the levels (Y, h, Me) and the stage increments."""
+    n = (len(tab.T_W) - 1) // 2
+    out = [np.array((W_I, I_MAI, 0.0))]
+    stages = []
+    air_state = pp.air_state
+    for k in range(n):
+        i0, im, i1 = 2 * k, 2 * k + 1, 2 * k + 2
+        dT = tab.T_W[i1] - tab.T_W[i0]
+        Y, h = out[-1][0], out[-1][1]
+        state = air_state(h, Y, P_G1, SAT_K)
+        monkeypatch.setattr(pp, 'air_state', lambda *_, s=state: s)      # freeze regime and w_sa
+        args = (tab, M_W_I, M_L, W_O, P_G1, SAT_K)
+        s1 = np.array(pp.derivatives(Y, h, i0, *args))
+        s2 = np.array(pp.derivatives(Y + 0.5 * dT * s1[0], h + 0.5 * dT * s1[1], im, *args))
+        s3 = np.array(pp.derivatives(Y + 0.5 * dT * s2[0], h + 0.5 * dT * s2[1], im, *args))
+        s4 = np.array(pp.derivatives(Y + dT * s3[0], h + dT * s3[1], i1, *args))
+        monkeypatch.setattr(pp, 'air_state', air_state)
+        stages.append([dT * s for s in (s1, s2, s3, s4)])
+        out.append(out[-1] + dT / 6.0 * (s1 + 2.0 * s2 + 2.0 * s3 + s4))
+    return np.array(out), stages
+
+
 def test_rk4_first_step_kloppers(kloppers_table):
     # p. G.3/G.4: increments of step (1,1) = Delta T_W (5.95 K) times the derivative: j = 0.006982, k = 24537.63,
     # l = 0.41635
-    d = pp.derivatives(W_I, I_MAI, 0, kloppers_table, M_W_I, M_L, W_O)
+    d = pp.derivatives(W_I, I_MAI, 0, kloppers_table, M_W_I, M_L, W_O, P_G1, SAT_K)
     dT = kloppers_table.T_W[2] - kloppers_table.T_W[0]
     assert dT == pytest.approx(5.95)
     assert dT * d[0] == pytest.approx(0.006982, abs=1e-6)
@@ -178,23 +209,89 @@ def test_rk4_first_step_kloppers(kloppers_table):
     assert dT * d[2] == pytest.approx(0.41635, abs=1e-5)
 
 
-def test_rk4_level_1_kloppers(kloppers_table):
-    # p. G.6: w(1) = 0.0133338, i_ma(1) = 50019.67 J/kg, Me_P(1) = 0.3984. Kloppers uses i_v(1,1) = 2553650 again in
-    # step (1,2) instead of i_v at 303.895 K (2559265); this slip accounts for the 0.1 J/kg in i_ma
-    Y, h, Me = pp.integrate(kloppers_table, W_I, I_MAI, M_W_I, M_L, W_O)
-    assert Y[1] == pytest.approx(0.0133338, abs=2e-7)
-    assert h[1] == pytest.approx(50019.67, abs=0.3)
-    assert Me[1] == pytest.approx(0.3984, abs=1e-4)
+def test_supersaturated_state_level_1_kloppers():
+    # p. G.8: at level 1 (w = 0.0133338, i = 50019.67 J/kg) the air is supersaturated, T_a = 290.8448 K,
+    # w_sa = 0.012689; p. G.10: Le_f = 0.9229 (printed with 0.662 instead of 0.622 -- misprint, value is with 0.622)
+    T_L, Y_sat_L, supersat = pp.air_state(50019.67, 0.0133338, P_G1, SAT_K)
+    assert supersat
+    assert T_L == pytest.approx(290.8448 - 273.15, abs=1e-3)
+    assert Y_sat_L == pytest.approx(0.012689, abs=1e-6)
+    assert ma.Le_f_supersat(SAT_K(33.72, P_G1), Y_sat_L) == pytest.approx(0.9229, abs=1e-4)
 
 
-def test_design_kloppers_supersaturation_flag():
-    # Kloppers' example becomes supersaturated after interval 1 -> warning and flag; total Me with the unsaturated
-    # equations close to his 0.741 (Tab. H.2, with the supersaturated branch)
-    with pytest.warns(UserWarning, match="supersaturated"):
+def test_supersaturated_step_2_1_kloppers(kloppers_table):
+    # pp. G.10/G.11: first stage of interval 2 (T_W = 306.87 K, supersaturated): j = 0.007599, k = 24957, l = 0.3731
+    # (in k Kloppers prints m_w/m_a = 0.9548 once, the value used is 0.9584)
+    d = pp.derivatives(0.0133338, 50019.67, 2, kloppers_table, M_W_I, M_L, W_O, P_G1, SAT_K)
+    assert 5.95 * d[0] == pytest.approx(0.007599, abs=1e-6)
+    assert 5.95 * d[1] == pytest.approx(24957.0, abs=1.0)
+    assert 5.95 * d[2] == pytest.approx(0.3731, abs=1e-4)
+
+
+def test_kloppers_procedure_app_g(kloppers_table, monkeypatch):
+    levels, stages = kloppers_integrate(kloppers_table, monkeypatch)
+    # level 1 (p. G.6): w = 0.0133338, i_ma = 50019.67 (Kloppers reuses i_v(1,1) in step (1,2): 0.1 J/kg), Me = 0.3984
+    assert levels[1][0] == pytest.approx(0.0133338, abs=2e-7)
+    assert levels[1][1] == pytest.approx(50019.67, abs=0.3)
+    assert levels[1][2] == pytest.approx(0.3984, abs=1e-4)
+    # interval 2, stages (2,2)-(2,4) (p. G.11; l(2,3) printed 0.03364, used 0.3364)
+    j = [s[0] for s in stages[1]]
+    k = [s[1] for s in stages[1]]
+    l = [s[2] for s in stages[1]]
+    assert j[1:] == pytest.approx([0.008957, 0.008973, 0.010124], abs=2e-6)
+    assert k[1:] == pytest.approx([25346.0, 25365.0, 25771.0], abs=1.0)
+    assert l[1:] == pytest.approx([0.33598, 0.3364, 0.2965], abs=1e-4)
+    # level 2 = fill outlet (p. G.11/G.12): w_o = 0.02226, i_ss = 75378 J/kg, Me_P = 0.7341, T_ao = 297.8508 K
+    assert levels[2][0] == pytest.approx(0.02226, abs=1e-5)
+    assert levels[2][1] == pytest.approx(75378.0, abs=1.0)
+    assert levels[2][2] == pytest.approx(0.7341, abs=1e-4)
+    T_L, _, supersat = pp.air_state(levels[2][1], levels[2][0], P_G1, SAT_K)
+    assert supersat
+    assert T_L == pytest.approx(297.8508 - 273.15, abs=5e-3)
+
+
+def test_stage_switching_vs_kloppers_procedure(monkeypatch):
+    # Kloppers' frozen w_sa is first order in the interval size; for many intervals it approaches the solution of
+    # poppe.integrate (regime and Y_sat_L in every stage), which is already converged with 2 intervals
+    tab_fine = ma.water_side_table(pp.water_grid(T_WI, T_WO, 160), P_G1, saturation='kroeger')
+    levels, _ = kloppers_integrate(tab_fine, monkeypatch)
+    tab = ma.water_side_table(pp.water_grid(T_WI, T_WO, 5), P_G1, saturation='kroeger')
+    Y, h, Me = pp.integrate(tab, W_I, I_MAI, M_W_I, M_L, W_O, P_G1, SAT_K)
+    assert levels[-1][0] == pytest.approx(Y[-1], rel=2e-3)
+    assert levels[-1][2] == pytest.approx(Me[-1], rel=2e-4)
+
+
+def test_switch_is_continuous(kloppers_table):
+    # at exactly saturated air (no mist) both sets of equations coincide: 1 J/kg above and below the saturated
+    # enthalpy give practically the same derivatives
+    Y = SAT_K(15.0, P_G1)
+    h_sat = ma.h_L(15.0, Y)
+    args = (kloppers_table, M_W_I, M_L, W_O, P_G1, SAT_K)
+    assert not pp.air_state(h_sat + 1.0, Y, P_G1, SAT_K)[2]
+    assert pp.air_state(h_sat - 1.0, Y, P_G1, SAT_K)[2]
+    d_unsat = pp.derivatives(Y, h_sat + 1.0, 2, *args)
+    d_ss = pp.derivatives(Y, h_sat - 1.0, 2, *args)
+    assert d_ss == pytest.approx(d_unsat, rel=1e-3)
+
+
+@pytest.mark.parametrize("T_L, Y", [(17.69, 0.0133338), (24.70, 0.02226), (12.0, 0.0100)])
+def test_inversion_T_L_supersaturated(T_L, Y):
+    h = ma.h_L_ss(T_L, Y, SAT_K(T_L, P_G1))
+    assert ma.T_L_from_h_L_ss(h, Y, P_G1, SAT_K) == pytest.approx(T_L, abs=1e-5)
+
+
+def test_design_kloppers():
+    # full design with outer iteration: supersaturated from level 1, no warning; Me close to Kloppers' 0.7341
+    # (his value carries the error of the frozen w_sa, see above)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         r = pp.design(T_WI, T_WO, M_W_I, M_L, T_AI, W_I, P_G1, n_intervals=2, saturation='kroeger')
+        r20 = pp.design(T_WI, T_WO, M_W_I, M_L, T_AI, W_I, P_G1, n_intervals=20, saturation='kroeger')
     assert r.supersaturated
     assert list(r.supersat_profile) == [False, True, True]
-    assert r.Me == pytest.approx(0.741, abs=0.01)
+    assert r.Me == pytest.approx(0.7341, rel=0.005)
+    assert r.Me == pytest.approx(r20.Me, rel=1e-4)
+    assert r.Y_o == pytest.approx(r20.Y_o, rel=1e-3)
 
 
 # =============================================================================
@@ -247,3 +344,15 @@ def test_mass_and_energy_balance():
 def test_too_little_air_raises():
     with pytest.raises(pp.PoppeError, match="too little air"):
         _design(m_dot_L=3.0)
+
+
+def test_design_winter_coolprop():
+    # Munich winter with CoolProp (operation): air below 0 °C, supersaturated almost through the whole fill (mist,
+    # plume); the run must work without warnings and give a plausible outlet state
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        r = pp.design(37.0, 25.0, 10.0, 10.0, -5.0, 0.0022, P_MUC)
+    assert r.supersaturated
+    assert r.Me > 0.0
+    assert -5.0 < r.T_L_o < 37.0
+    assert 0.0022 < r.Y_o < ma.Y_sat_W_coolprop(37.0, P_MUC)
