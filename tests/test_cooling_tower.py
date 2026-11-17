@@ -356,3 +356,20 @@ def test_design_winter_coolprop():
     assert r.Me > 0.0
     assert -5.0 < r.T_L_o < 37.0
     assert 0.0022 < r.Y_o < ma.Y_sat_W_coolprop(37.0, P_MUC)
+
+
+# =============================================================================
+# fill_evaluation.py -- Kloppers' 54 film fill tests (App. T) evaluated with poppe.design and CoolProp
+# =============================================================================
+
+def test_fill_tests_kloppers_coolprop():
+    # Me per metre against Kloppers' Poppe evaluation (Tables T.2/T.6/T.10). With Kröger's property equations instead
+    # of CoolProp the agreement is 0.1 % on average and below 1 % for every test (checked separately); with CoolProp
+    # the remaining difference is the property model. All tests are supersaturated at the outlet.
+    from cooling_tower import fill_evaluation as fe
+    out = fe.evaluate_tests(n_intervals=10)
+    assert len(out) == 54
+    assert out['supersat_calc'].all()
+    assert out['dMe_rel'].abs().mean() < 0.01
+    assert out['dMe_rel'].abs().max() < 0.03
+    assert out['dT_ao_P'].abs().max() < 0.3

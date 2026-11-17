@@ -130,6 +130,13 @@ def Y_inlet(T_L: float, phi: float, p: float) -> float:
     return relative_to_absolute_humidity(T_L, p, phi)
 
 
+def Y_inlet_wb(T_L: float, T_wb: float, p: float) -> float:
+    """Humidity ratio of the inlet air [kg/kg dry air] from dry-bulb T_L and wet-bulb T_wb [°C] at pressure p [Pa],
+    CoolProp (input 'B' = wet-bulb temperature). For fill test data, which give the wet bulb instead of phi
+    (Kloppers' dissertation, App. T, Tables T.1/T.5/T.9; he converts with Kröger's Eq. A.3.5)."""
+    return CP.HAPropsSI('W', 'T', T_L + T0_K, 'B', T_wb + T0_K, 'P', p)
+
+
 def Y_sat_L(T_L: float, p: float) -> float:
     """Saturation humidity ratio X''(theta_L) [kg/kg dry air] at the AIR temperature T_L [°C], CoolProp. Below 0 °C
     CoolProp should refer the saturation to ice -- NOT YET CHECKED against a table (open point,
