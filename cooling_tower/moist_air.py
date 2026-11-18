@@ -283,7 +283,45 @@ def water_side_table(T_W_grid, p: float, saturation: str = 'coolprop') -> WaterS
 
 
 # =============================================================================
-# 6. Helpers
+# 6. Density and viscosity of humid air (for pressure_drop.py; Kröger 2004, Vol. 1, App. A; T in °C)
+# =============================================================================
+# The same equations as in Kloppers' worked examples (App. I, J), so that his loss coefficients are used with the
+# property values they were derived with. Y_v = humidity ratio of the VAPOUR [kg/kg dry air].
+
+M_A = 28.97                 # molar mass of dry air [kg/kmol] (Kröger, A.3.3)
+M_V = 18.016                # molar mass of water vapour [kg/kmol]
+
+
+def rho_av(T: float, Y_v: float, p: float) -> float:
+    """Density of the air-vapour mixture [kg/m^3] (kg humid air per m^3), Kröger Eq. (A.3.1) (ASHRAE):
+    rho_av = (1 + w) [1 - w/(w + 0.62198)] p / (287.08 T)."""
+    return (1.0 + Y_v) * (1.0 - Y_v / (Y_v + 0.62198)) * p / (287.08 * (T + T0_K))
+
+
+def mu_a(T: float) -> float:
+    """Dynamic viscosity of dry air [kg/(m s)], Kröger Eq. (A.1.3)."""
+    T_K = T + T0_K
+    return 2.287973e-6 + 6.259793e-8 * T_K - 3.131956e-11 * T_K**2 + 8.15038e-15 * T_K**3
+
+
+def mu_v(T: float) -> float:
+    """Dynamic viscosity of saturated water vapour [kg/(m s)], Kröger Eq. (A.2.3)."""
+    T_K = T + T0_K
+    return 2.562435e-6 + 1.816683e-8 * T_K + 2.579066e-11 * T_K**2 - 1.067299e-14 * T_K**3
+
+
+def mu_av(T: float, Y_v: float) -> float:
+    """Dynamic viscosity of the air-vapour mixture [kg/(m s)], Kröger Eq. (A.3.3) (Godridge):
+    mu_av = (X_a mu_a M_a^0.5 + X_v mu_v M_v^0.5) / (X_a M_a^0.5 + X_v M_v^0.5),
+    X_a = 1/(1 + 1.608 w), X_v = w/(w + 0.622)."""
+    X_a = 1.0 / (1.0 + 1.608 * Y_v)
+    X_v = Y_v / (Y_v + 0.622)
+    return ((X_a * mu_a(T) * M_A**0.5 + X_v * mu_v(T) * M_V**0.5)
+            / (X_a * M_A**0.5 + X_v * M_V**0.5))
+
+
+# =============================================================================
+# 7. Helpers
 # =============================================================================
 
 def _check_liquid_range(T: float, where: str) -> None:

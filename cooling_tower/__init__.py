@@ -26,7 +26,7 @@ Le_f (Lewis factor), sat_W / sat_L = saturated at the water / air temperature.
                      the outlet humidity  [done: design mode; Merkel validation switches to follow]
   fill_evaluation.py fill test data evaluated with poppe.design (consistent Me per metre for fill.py)  [done:
                      Kloppers 2003, App. T, data/kloppers2003_film_fill.csv]
-  pressure_drop.py   air-side pressure drop of the tower
+  pressure_drop.py   air-side pressure drop of the tower (VDI N4 6.3/6.4, Kloppers App. D/T)  [done]
   water_balance.py   evaporation, drift, blowdown, make-up water
   design.py          design: required Merkel number over L/G, fill height and cross-section, cost optimum
   evaluate.py        one operating point -> one result row with the SAME columns as comparison/evaluate.run_point

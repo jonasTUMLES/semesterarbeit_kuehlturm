@@ -100,7 +100,58 @@ The remaining -0.13 % is the property model (systematic). The deviation from the
 same for Kloppers' own Poppe values, i.e. a property of the model / measurement, not of the implementation.
 The column `Me_P_calc` is the consistent data base for the fill correlation (`fill.py`).
 
+## Pressure drop (`pressure_drop.py`)
+
+Forced draft: fan at the bottom, blowing into a plenum below the fill; the fan has to provide the total pressure drop
+(VDI N4, 6.4). Framework VDI N4 6.3/6.4: K = Delta_p/(rho v^2/2) (Gl. 36), all coefficients referred to the mean
+state in the fill and added (Gl. 40), Delta_p = K_tot rho_fill v_fill^2/2 (Gl. 41).
+
+Reference state: m_av = m_L (1 + Y) below (i) / above (o) the fill, G_av,m = (G_av,i + G_av,o)/2,
+1/rho_av,m = 0.5 (1/rho_av,i + 1/rho_av,o). Conversion of a coefficient to this state: Kloppers (D.5)
+K_fi = K (rho_m/rho)(m_av/m_av,m)^2 (A_fr/A)^2 (exact form of the VDI conversion in 6.3).
+
+| VDI 6.3 | component | coefficient (own reference state) | source |
+|---|---|---|---|
+| 1 | fan inlet | zeta_E = 0.05 rounded (0.5 sharp-edged, sensitivity), at the fan | VDI L1.3, Sec. 1.3, Fig. 4 |
+| 1 | fan -> plenum | (1 - A_F/A_plenum)^2, at the fan (Borda-Carnot) | VDI L1.3 Eq. (7) = Kloppers (D.16) |
+| 2 | rain zone | neglected | VDI N4 6.2; range of Kloppers (D.9) not met |
+| 3 | fill supports | 0.5 (incl. contraction), below the fill | Kloppers App. J |
+| 4 | fill | K_fdm = K_fdm1 L_fi, (T.4); + momentum (D.19); mean fill state | Kloppers App. T, App. D |
+| – | expansion after the fill | (D.16) with sigma = 1 -> 0 | Kloppers (D.16) |
+| 5 | spray zone | L_sp [0.4 G_W/G_L + 1], above the fill; L_sp = 0.15 m (as in the fill tests) | Kloppers (D.6) |
+| 5 | water distribution | 0.5, above the fill | Kloppers D.2.3 |
+| 6+7 | drift eliminator | 27.4892 Ry^-0.14247, Ry = m_av/(mu_av A_fr), above the fill | Kloppers (D.7), type c App. I |
+| 8 | outlet shell | none (open outlet assumed -- to be confirmed) | – |
+| 9 | exit | K = 1 at the outlet (Borda-Carnot, A_out/A_ambient -> 0) | VDI N4 6.3, VDI L1.3 Eq. (7) |
+
+Fill: K_fdm1 = (5.154914 G_W^0.877646 G_L^-1.462034 + 10.806728 G_W^0.226578 G_L^0.293222) L_fi^-0.236292
+(Kloppers T.4, r^2 = 0.904; against his 54 values K_fdm,P: rms 5.3 %, max 14.7 %; K_P is on average 0.3 % below
+K_M, so the heat-transfer model hardly matters for the pressure drop). Momentum (D.19):
+K_fi = K_fdm + (G_av,o^2/rho_o - G_av,i^2/rho_i)/(G_av,m^2/rho_m); without factor 2 because the coefficients refer
+to the total pressure (D.2/D.3). Buoyancy neglected (forced draft).
+
+Not used: Kloppers (D.10)-(D.12) (round towers with an open inlet around the circumference, d_i = 80-120 m),
+(D.13)/(D.14) (induced-draft rectangular towers), (D.15) (supports of a tower shell), (D.8)/(D.9) (rain zone).
+
+Properties: humid air after Kröger App. A (density A.3.1, viscosity A.1.3/A.2.3/A.3.3, `moist_air.rho_av`,
+`mu_av`), as in Kloppers' examples. Supersaturated air: the gas holds Y_sat(T_L), the mist adds mass but no volume.
+Fan power P_F = V_F Delta_p / eta_F, V_F at the fan (inlet air), eta_F = 0.7 (as in the predecessor's code).
+
+Validation against Kloppers App. J (= Kröger Vol. 2, pp. 207-223): rho_av, mu_av, the conversions K_fsfi, K_wdfi,
+K_spfi, K_defi, K_upfi and the momentum correction of the fill are reproduced (test
+`test_conversion_to_fill_kroeger_example`). Misprint: the fan upstream coefficient on p. 220 is printed as 0.5, the
+value used is the specified 0.52 (p. 208).
+
+Example (37 -> 25 °C, L/G = 1, G_W = G_L = 3 kg/(m^2 s), L_fi = 1.2 m, A_F = A_fr/3, Kröger properties):
+Delta_p = 160 Pa -- fill 110 Pa, drift eliminator 22 Pa, fan -> plenum 17 Pa, exit 4.5 Pa, the rest 1-2 Pa each.
+
 ## Change log
+
+**2026-11-18**
+- New `pressure_drop.py`: loss coefficients of all components (table above), conversion (D.5), total pressure drop
+  (VDI Gl. 40/41), fan power.
+- `moist_air.py`: density and viscosity of humid air after Kröger App. A (`rho_av`, `mu_a`, `mu_v`, `mu_av`).
+- Tests against Kloppers App. J and against the 54 measured loss coefficients.
 
 **2026-11-17**
 - `poppe.py`: supersaturated branch (Kröger Eqs. 4.2.33-4.2.36); new `saturation_function` and `air_state`;
@@ -117,6 +168,7 @@ The column `Me_P_calc` is the consistent data base for the fill correlation (`fi
 
 - [ ] Design ambient: wet-bulb percentile for Munich (ASHRAE 0.4 % or 1 %), cross-check with the climate year
 - [x] Equations for supersaturated air (Kröger 2004, Eqs. 4.2.18, 4.2.33-4.2.36; Kloppers App. B) -- 2026-11-17
+- [ ] Outlet of the tower really open (no outlet shell)? Fan diameter / plenum geometry (`geometry.py`)
 - [ ] Fit of the fill correlation Me/L_fi = c1 G_W^c2 G_L^c3 L_fi^c4 (T_W,in^c5) to the 54 re-evaluated tests (`fill.py`)
 - [ ] Poppe loss-coefficient correlation of the fill (Kloppers dissertation, App. R-T)
 - [ ] Common capital-cost basis for all three systems

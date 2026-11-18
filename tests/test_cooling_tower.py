@@ -363,13 +363,145 @@ def test_design_winter_coolprop():
 # =============================================================================
 
 def test_fill_tests_kloppers_coolprop():
-    # Me per metre against Kloppers' Poppe evaluation (Tables T.2/T.6/T.10). With Kröger's property equations instead
-    # of CoolProp the agreement is 0.1 % on average and below 1 % for every test (checked separately); with CoolProp
-    # the remaining difference is the property model. All tests are supersaturated at the outlet.
+    # Me per metre against Kloppers' Poppe evaluation (Tables T.2/T.6/T.10). With CoolProp: on average -0.13 %
+    # (systematic, property model), at most 0.33 %; air outlet temperature at most 0.04 K from Kloppers' T_ao_P.
+    # (With Kröger's property equations instead of CoolProp: +0.09 % on average, at most 0.9 %, checked separately.)
+    # All tests are supersaturated at the outlet.
     from cooling_tower import fill_evaluation as fe
     out = fe.evaluate_tests(n_intervals=10)
     assert len(out) == 54
     assert out['supersat_calc'].all()
-    assert out['dMe_rel'].abs().mean() < 0.01
-    assert out['dMe_rel'].abs().max() < 0.03
-    assert out['dT_ao_P'].abs().max() < 0.3
+    assert out['dMe_rel'].abs().mean() < 0.003
+    assert out['dMe_rel'].abs().max() < 0.005
+    assert out['dT_ao_P'].abs().max() < 0.06
+
+
+# =============================================================================
+# fill.py -- Poppe correlation of the film fill
+# =============================================================================
+
+def _kloppers_poppe_fit():
+    # fit to Kloppers' own Poppe values (Tables T.2/T.6/T.10) -- needs no CoolProp
+    from cooling_tower import fill, fill_evaluation as fe
+    return fill.fit_correlation(fe.load_tests(), y='Me_P', name='Kloppers Me_P')
+
+
+def test_fill_fit_kloppers_values():
+    corr, stats = _kloppers_poppe_fit()
+    assert stats.n == 54
+    assert stats.R2 > 0.98
+    assert stats.rms_rel < 0.05
+    assert corr.G_W_range == pytest.approx((2.687, 6.831))
+    assert corr.L_fi_range == pytest.approx((0.6, 1.2))
+
+
+def test_fill_height_is_inverse_of_Me():
+    corr, _ = _kloppers_poppe_fit()
+    for G_W, G_L, L_fi in [(3.0, 2.5, 0.8), (5.5, 3.5, 1.1)]:
+        assert corr.fill_height(corr.Me(G_W, G_L, L_fi), G_W, G_L) == pytest.approx(L_fi, rel=1e-12)
+
+
+def test_fill_range_warning():
+    corr, _ = _kloppers_poppe_fit()
+    with pytest.warns(UserWarning, match="extrapolation"):
+        corr.Me_per_m(8.0, 2.5, 0.9)
+
+
+def test_fill_correlation_own_evaluation():
+    # the correlation used in the design: fitted to the own re-evaluation (CoolProp). Since the own Me differ from
+    # Kloppers' Poppe values by only -0.13 % on average, the coefficients must be practically the same
+    from cooling_tower import fill
+    if not fill.DATA_POPPE.exists():
+        pytest.skip("run  python -m cooling_tower.fill_evaluation  to create the data base of the correlation")
+    own = fill.film_fill_poppe()
+    ref, _ = _kloppers_poppe_fit()
+    assert own.c1 == pytest.approx(ref.c1, rel=0.01)
+    assert (own.c2, own.c3, own.c4) == pytest.approx((ref.c2, ref.c3, ref.c4), abs=0.01)
+
+
+# =============================================================================
+# pressure_drop.py -- against Kloppers' worked example (App. J = Kröger 2004, Vol. 2, Sec. 8.3, pp. 207-223)
+# =============================================================================
+
+# states of the example: 1 below the fill, 5 above the fill, 15 mean (p. 211 and pp. 218-220)
+KJ = dict(T1=33.5, w1=0.016569, p1=101325.0, rho1=1.1397, m1=438.4,
+          T5=306.7645 - 273.15, w5=0.033922, p5=101170.6, rho5=1.12634, m5=445.8834, mu5=1.84273e-5,
+          rho15=1.132982, m15=442.1426, A_fr=144.0, G_w=2.86111, G_a=2.994823)
+
+
+def test_humid_air_properties_kroeger_example():
+    # p. 211 / p. 218: rho_av1 = 1.1397, rho_av5 = 1.12634 kg/m^3 (Kröger A.3.1), mu_av5 = 1.84273e-5 kg/(m s) (A.3.3)
+    assert ma.rho_av(KJ['T1'], KJ['w1'], KJ['p1']) == pytest.approx(KJ['rho1'], abs=1e-4)
+    assert ma.rho_av(KJ['T5'], KJ['w5'], KJ['p5']) == pytest.approx(KJ['rho5'], abs=1e-4)
+    assert ma.mu_a(KJ['T5']) == pytest.approx(1.8779e-5, rel=1e-4)
+    assert ma.mu_v(KJ['T5']) == pytest.approx(1.0254e-5, rel=1e-4)
+    assert ma.mu_av(KJ['T5'], KJ['w5']) == pytest.approx(KJ['mu5'], rel=1e-4)
+
+
+def test_conversion_to_fill_kroeger_example():
+    # (inputs as printed, rounded -> agreement to about 1e-5)
+    # pp. 218-220: K_fsfi = 0.4886764, K_wdfi = 0.5114949, K_upfi = 4.36576 (fan d_F = 8 m), K_spfi = 0.706958
+    # (L_sp = 0.5 m), K_defi = 5.0649 (type c), fill with momentum K_fi = 4.487634 from K_fdm = 4.441997
+    from cooling_tower import pressure_drop as pd_
+    import math
+    m, A = (KJ['rho15'], KJ['m15'], KJ['A_fr']), KJ['A_fr']
+    assert pd_.refer_to_fill(0.5, KJ['rho1'], KJ['m1'], A, *m) == pytest.approx(0.4886764, abs=1e-5)
+    assert pd_.refer_to_fill(0.5, KJ['rho5'], KJ['m5'], A, *m) == pytest.approx(0.5114949, abs=1e-5)
+    # fan upstream loss: specified K_up = 0.52 (p. 208); the formula on p. 220 shows 0.5, but 4.36576 is with 0.52
+    assert pd_.refer_to_fill(0.52, KJ['rho5'], KJ['m5'], math.pi * 8.0**2 / 4.0, *m) == pytest.approx(4.36576, abs=1e-4)
+    K_sp = pd_.K_spray_zone(0.5, KJ['G_w'], KJ['G_a'])
+    assert pd_.refer_to_fill(K_sp, KJ['rho5'], KJ['m5'], A, *m) == pytest.approx(0.706958, abs=1e-5)
+    K_de = pd_.K_drift_eliminator(KJ['m5'], KJ['mu5'], A)
+    assert pd_.refer_to_fill(K_de, KJ['rho5'], KJ['m5'], A, *m) == pytest.approx(5.0649, abs=1e-3)
+    assert pd_.K_fill(4.441997, KJ['m1'] / A, KJ['rho1'], KJ['m5'] / A, KJ['rho5']) == pytest.approx(4.487634, abs=1e-5)
+
+
+def test_fill_loss_coefficient_T4_against_measurements():
+    # Kloppers (T.4) against his 54 values K_fdm,P (Tables T.2/T.6/T.10): rms 5.3 %, max 14.7 %
+    from cooling_tower import pressure_drop as pd_, fill_evaluation as fe
+    d = fe.load_tests()
+    K = [pd_.K_fdm1_kloppers(r.G_w, r.G_a, r.L_fi) for r in d.itertuples()]
+    rel = np.array(K) / d['K_fdm_P'].to_numpy() - 1.0
+    assert np.sqrt(np.mean(rel**2)) < 0.06
+    assert np.abs(rel).max() < 0.16
+    assert abs(rel.mean()) < 0.01
+
+
+def test_borda_carnot():
+    from cooling_tower import pressure_drop as pd_
+    assert pd_.K_expansion(1.0, 3.0) == pytest.approx((2.0 / 3.0)**2)
+    assert pd_.K_expansion(2.0, 2.0) == 0.0                     # no expansion (e.g. above the fill)
+    with pytest.raises(ValueError):
+        pd_.K_expansion(3.0, 1.0)
+
+
+def _tower_case(**kw):
+    # 37 -> 25 °C, L/G = 1, G_W = G_L = 3 kg/(m^2 s), fill 1.2 m, fan area A_fr/3
+    from cooling_tower import pressure_drop as pd_
+    r = pp.design(37.0, 25.0, 30.0, 30.0, 30.0, 0.012, P_MUC, n_intervals=10, saturation='kroeger')
+    path = pd_.FlowPath(A_fr=10.0, A_F=10.0 / 3.0, **kw)
+    return pd_, r, pd_.tower_pressure_drop(path, 30.0, 30.0, 1.2, 30.0, 0.012, r.T_L_o, r.Y_o, P_MUC,
+                                            saturation='kroeger')
+
+
+def test_tower_pressure_drop_consistency():
+    pd_, r, res = _tower_case()
+    assert res.dp == pytest.approx(sum(res.dp_parts.values()))
+    assert res.K_total == pytest.approx(sum(res.K.values()))
+    # the fan -> plenum loss computed directly at the fan, VDI L1.3 Eq. (7), equals the converted value
+    s_i = res.states['i']
+    u_F = s_i.m_av / (s_i.rho * 10.0 / 3.0)
+    assert res.dp_parts['fan -> plenum'] == pytest.approx((1 - 1 / 3)**2 * s_i.rho * u_F**2 / 2, rel=1e-12)
+    # open outlet with the fill cross-section: exit loss close to one dynamic pressure of the fill
+    assert res.K['exit'] == pytest.approx(1.0, abs=0.05)
+    # plausible magnitudes: fill about 100 Pa at 1.2 m and G = 3 (Kloppers, Table T.9), total some 100-300 Pa
+    assert 70.0 < res.dp_parts['fill'] < 140.0
+    assert 100.0 < res.dp < 300.0
+    assert pd_.fan_power(res) == pytest.approx(res.V_F * res.dp / 0.7)
+
+
+def test_tower_pressure_drop_fan_inlet_sensitivity():
+    pd_, _, res = _tower_case()
+    _, _, res_sharp = _tower_case(zeta_inlet=pd_.ZETA_INLET_SHARP)
+    assert res_sharp.K['fan inlet'] == pytest.approx(10.0 * res.K['fan inlet'])
+    assert res_sharp.dp > res.dp
